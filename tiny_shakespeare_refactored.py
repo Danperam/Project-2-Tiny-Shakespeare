@@ -4,12 +4,16 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from Trainer import Trainer
+import scienceplots
+import matplotlib.pyplot as plt
+plt.style.use(["science", "grid"])
 
+#import tiktoken
 
 # -----------------------
 # Data utilities
 # -----------------------
-
 
 class Tokenizer:
     def __init__(self, text: str):
@@ -197,7 +201,7 @@ class GPTConfig:
     n_embd: int = 384
     n_head: int = 6
     n_layer: int = 6
-    dropout: float = 0.1
+    dropout: float = 0.2
 
 
 # -----------------------
@@ -225,6 +229,7 @@ def main():
     text = text_path.read_text(encoding="utf-8")
 
     tokenizer = Tokenizer(text)
+    #tokenizer = tiktoken.get_encoding("gpt2")
     data_loader = DataLoader(tokenizer.encode(text), batch_size=batch_size, block_size=block_size)
 
     config = GPTConfig(vocab_size=len(tokenizer.chars), dropout=dropout)
@@ -232,41 +237,29 @@ def main():
         config.vocab_size, config.n_embd, config.n_head, config.n_layer, dropout=config.dropout
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        data_loader=data_loader,
+        device=device,
+        max_iters=max_iters,
+        eval_interval=eval_interval,
+        eval_iters=eval_iters,
+    )
 
-    @torch.no_grad()
-    def estimate_loss():
-        out = {}
-        model.eval()
-        for split in ["train", "val"]:
-            losses = torch.zeros(eval_iters)
-            for k in range(eval_iters):
-                X, Y = data_loader.get_batch(split)
-                X, Y = X.to(device), Y.to(device)
-                _, loss = model(X, Y)
-                losses[k] = loss.item()
-            out[split] = losses.mean()
-        model.train()
-        return out
-
-    for iter in range(max_iters):
-        if iter % eval_interval == 0 or iter == max_iters - 1:
-            losses = estimate_loss()
-            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-
-        xb, yb = data_loader.get_batch("train")
-        xb, yb = xb.to(device), yb.to(device)
-
-        logits, loss = model(xb, yb)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+    print("Starting training... This may take a while...")
+    trainer.fit()
+    print(f"Training completed in {trainer.training_time / 60:.2f} minutes")
+    trainer.plot_learning_curve(title="Tiny Shakespeare - Learning curve")
+    torch.save(model.state_dict(), "model.pkl")
 
     # Generation example
-    while True:
-        context = torch.zeros((1, 1), dtype=torch.long, device=device)
-        generated = model.generate(context, max_new_tokens=100, block_size=block_size)[0].tolist()
-        print(tokenizer.decode(generated) + "\n")
-        input("Press Enter to generate next text...")
+    max_new_tokens = 1000
+    print(f"Generating text with {max_new_tokens} tokens...")
+    print("\n")
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    generated = model.generate(context, max_new_tokens=max_new_tokens, block_size=block_size)[0].tolist()
+    print(tokenizer.decode(generated))
 
 
 if __name__ == "__main__":

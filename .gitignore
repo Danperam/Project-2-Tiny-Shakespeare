@@ -2,5 +2,5 @@
 *.pkl
 
 # Ignore experiment output folders
-learning_curves/
 failed_attempts/
+__pycache__/
