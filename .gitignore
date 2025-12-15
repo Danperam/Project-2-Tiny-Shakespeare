@@ -4,3 +4,4 @@
 # Ignore experiment output folders
 failed_attempts/
 __pycache__/
+old/

@@ -4,12 +4,18 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from Trainer import Trainer
+import matplotlib.pyplot as plt
+from time import sleep
+import scienceplots
 
+plt.style.use(["science", "grid"])
+
+#import tiktoken
 
 # -----------------------
 # Data utilities
 # -----------------------
-
 
 class Tokenizer:
     def __init__(self, text: str):
@@ -197,7 +203,7 @@ class GPTConfig:
     n_embd: int = 384
     n_head: int = 6
     n_layer: int = 6
-    dropout: float = 0.1
+    dropout: float = 0.2
 
 
 # -----------------------
@@ -215,8 +221,8 @@ def main():
     eval_interval = 100
     eval_iters = 200
     dropout = 0.2
-    block_size = 32
-    batch_size = 64
+    block_size = 128
+    batch_size = 32
 
     # Load data
     text_path = Path("input.txt")
@@ -225,6 +231,7 @@ def main():
     text = text_path.read_text(encoding="utf-8")
 
     tokenizer = Tokenizer(text)
+    #tokenizer = tiktoken.get_encoding("gpt2")
     data_loader = DataLoader(tokenizer.encode(text), batch_size=batch_size, block_size=block_size)
 
     config = GPTConfig(vocab_size=len(tokenizer.chars), dropout=dropout)
@@ -232,41 +239,37 @@ def main():
         config.vocab_size, config.n_embd, config.n_head, config.n_layer, dropout=config.dropout
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-
-    @torch.no_grad()
-    def estimate_loss():
-        out = {}
-        model.eval()
-        for split in ["train", "val"]:
-            losses = torch.zeros(eval_iters)
-            for k in range(eval_iters):
-                X, Y = data_loader.get_batch(split)
-                X, Y = X.to(device), Y.to(device)
-                _, loss = model(X, Y)
-                losses[k] = loss.item()
-            out[split] = losses.mean()
-        model.train()
-        return out
-
-    for iter in range(max_iters):
-        if iter % eval_interval == 0 or iter == max_iters - 1:
-            losses = estimate_loss()
-            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-
-        xb, yb = data_loader.get_batch("train")
-        xb, yb = xb.to(device), yb.to(device)
-
-        logits, loss = model(xb, yb)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        data_loader=data_loader,
+        device=device,
+        max_iters=max_iters,
+        eval_interval=eval_interval,
+        eval_iters=eval_iters,
+    )
+    gpu = f"GPU: {torch.cuda.get_device_name(device)}" if torch.cuda.is_available() else "CPU"
+    print(f"Starting training on {gpu}...")
+    print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M")
+    trainer.fit()
+    print(f"Training completed in {trainer.training_time / 60:.2f} minutes")
+    trainer.plot_learning_curve(title="Tiny Shakespeare - Learning curve")
+    torch.save(model.state_dict(), "model.pkl")
 
     # Generation example
-    while True:
-        context = torch.zeros((1, 1), dtype=torch.long, device=device)
-        generated = model.generate(context, max_new_tokens=100, block_size=block_size)[0].tolist()
-        print(tokenizer.decode(generated) + "\n")
-        input("Press Enter to generate next text...")
+    max_new_tokens = 1000
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        try:
+            while True: # Infinite loop
+                context = model.generate(context, max_new_tokens=1, block_size=block_size) # Generate a new token
+                new_token = context[0, -1].item() # Get the last token generated
+                print(tokenizer.decode([new_token]), end="", flush=True) # Print the new token decoded
+                context = context[:, -block_size:] # Update the context to the last block_size tokens
+                sleep(0.03) # Wait 30 milliseconds before generating the next token
+        except KeyboardInterrupt:
+            print("\nGeneration stopped by user.")
 
 
 if __name__ == "__main__":

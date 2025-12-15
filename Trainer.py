@@ -32,8 +32,11 @@ class Trainer:
         self.model.eval()
         out = {}
         for split in ["train", "val"]:
+            #print(f"Evaluating {split}...")
             losses = torch.zeros(self.eval_iters)
-            for k in range(self.eval_iters):
+            bar_format = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} | {rate_fmt}"
+            pbar = tqdm(range(self.eval_iters), desc=f"Evaluating {split}", ncols=80, bar_format=bar_format, unit="it", leave=False)
+            for k in pbar:
                 x, y = self.data_loader.get_batch(split)
                 x, y = x.to(self.device), y.to(self.device)
                 _, loss = self.model(x, y)
@@ -44,14 +47,15 @@ class Trainer:
 
     def fit(self):
         start_time = time.time()
-        for step in tqdm(range(self.max_iters), desc="Training", ncols=80):
+        bar_format = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} | {rate_fmt} {postfix}"
+        pbar = tqdm(range(self.max_iters), desc="Training", ncols=87, bar_format=bar_format, unit="epoch")
+        pbar.set_postfix(train_loss=0, val_loss=0)
+        for step in pbar:
             if step % self.eval_interval == 0 or step == self.max_iters - 1:
                 losses = self._estimate_loss()
                 self.train_losses.append(losses["train"])
                 self.val_losses.append(losses["val"])
-                #print(
-                #    f"step {step+1}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
-                #)
+                pbar.set_postfix(train_loss=f"{losses['train']:.4f}", val_loss=f"{losses['val']:.4f}")
             x, y = self.data_loader.get_batch("train")
             x, y = x.to(self.device), y.to(self.device)
             _, loss = self.model(x, y)
@@ -71,7 +75,7 @@ class Trainer:
             range(1, len(self.train_losses) + 1), self.train_losses, label="Training", color="firebrick"
         )
         ax.plot(range(1, len(self.val_losses) + 1), self.val_losses, label="Validation", color="darkslategrey")
-        ax.set_xlabel("Epoch")
+        ax.set_xlabel("Iteration")
         ax.set_ylabel("Loss")
         ax.set_title(title)
         ax.legend()
